@@ -53,22 +53,23 @@ class WebRTCSignallingErrorNoPeer(Exception):
 
 
 class WebRTCSignalling:
-    def __init__(self, server, id, peer_id, enable_https=False, enable_basic_auth=False, basic_auth_user=None, basic_auth_password=None):
+    def __init__(self, server, id, peer_id, enable_https=False, internal_token=None):
         """Initialize the signalling instance
 
         Arguments:
             server {string} -- websocket URI to connect to, example: ws://127.0.0.1:8080
             id {integer} -- ID of this client when registering.
             peer_id {integer} -- ID of peer to connect to.
+            internal_token {string} -- shared secret that lets this same-process
+                loopback connection bypass the server's Basic Auth check,
+                since it may not know the real (possibly encrypted-only) password.
         """
 
         self.server = server
         self.id = id
         self.peer_id = peer_id
         self.enable_https = enable_https
-        self.enable_basic_auth = enable_basic_auth
-        self.basic_auth_user = basic_auth_user
-        self.basic_auth_password = basic_auth_password
+        self.internal_token = internal_token
         self.conn = None
 
         self.on_ice = lambda mlineindex, candidate: logger.warn(
@@ -102,9 +103,8 @@ class WebRTCSignalling:
                 sslctx.check_hostname = False
                 sslctx.verify_mode = ssl.CERT_NONE
             headers = None
-            if self.enable_basic_auth:
-                auth64 = base64.b64encode(bytes("{}:{}".format(self.basic_auth_user, self.basic_auth_password), "ascii")).decode("ascii")
-                headers = [("Authorization", "Basic {}".format(auth64))]
+            if self.internal_token:
+                headers = [("X-Selkies-Internal-Token", self.internal_token)]
             
             while True:
                 try:

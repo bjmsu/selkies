@@ -13,8 +13,10 @@ logger.setLevel(logging.DEBUG)
 
 def fit_res(w, h, max_w, max_h):
     if w < max_w and h < max_h:
-        # Input resolution fits
-        return w, h
+        # Input resolution fits; still snap to even. H.264/NV12 requires even
+        # width and height, otherwise the encoder fails to initialize on an
+        # odd browser window size (e.g. a height of 945 or 1079).
+        return int(w) + int(w) % 2, int(h) + int(h) % 2
 
     # Reduce input dimensions until they fit
     new_w = float(w)

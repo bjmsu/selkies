@@ -15,6 +15,7 @@
 
 import os
 import base64
+import secrets
 import sys
 import ssl
 import logging
@@ -32,6 +33,8 @@ import json
 import hashlib
 import hmac
 import base64
+
+import auth_secret
 
 from pathlib import Path
 from http import HTTPStatus
@@ -66,8 +69,6 @@ def generate_rtc_config(turn_host, turn_port, shared_secret, user, protocol='udp
     stun_list = ["stun:{}:{}".format(turn_host, turn_port)]
     if stun_host is not None and stun_port is not None and (stun_host != turn_host or str(stun_port) != str(turn_port)):
         stun_list.insert(0, "stun:{}:{}".format(stun_host, stun_port))
-    if stun_host != "stun.l.google.com" or (str(stun_port) != "19302"):
-        stun_list.append("stun:stun.l.google.com:19302")
 
     rtc_config = {}
     rtc_config["lifetimeDuration"] = "{}s".format(expiry_hour * 3600)
@@ -141,10 +142,17 @@ class WebRTCSimpleServer(object):
         self.stun_host = options.stun_host
         self.stun_port = options.stun_port
 
-        # Basic authentication options
+        # Basic authentication options (password only, username is not checked)
         self.enable_basic_auth = options.enable_basic_auth
-        self.basic_auth_user = options.basic_auth_user
         self.basic_auth_password = options.basic_auth_password
+        self.basic_auth_password_enc = getattr(options, "basic_auth_password_enc", "")
+        # Per-run secret that lets this process's own loopback signalling
+        # connections skip Basic Auth (see webrtc_signalling.WebRTCSignalling).
+        self.internal_token = getattr(options, "internal_token", None)
+        # Session tokens issued after a successful login.html password check
+        # (see process_request), checked via a cookie on every request after.
+        # In-memory only; sessions reset when the process restarts.
+        self._sessions = set()
 
         self.rtc_config = options.rtc_config
         if os.path.exists(options.rtc_config_file):
@@ -162,8 +170,8 @@ class WebRTCSimpleServer(object):
 
         # Validate basic authentication arguments
         if self.enable_basic_auth:
-            if not self.basic_auth_password:
-                raise Exception("missing basic_auth_password when using enable_basic_auth option.")
+            if not (self.basic_auth_password or self.basic_auth_password_enc):
+                raise Exception("missing basic_auth_password or basic_auth_password_enc when using enable_basic_auth option.")
 
     ############### Helper functions ###############
 
@@ -186,14 +194,42 @@ class WebRTCSimpleServer(object):
         ]
 
         username = ''
-        if self.enable_basic_auth:
-            if "basic" in request_headers.get("authorization", "").lower():
-                username, passwd = basicauth.decode(request_headers.get("authorization"))
-                if not (username == self.basic_auth_user and passwd == self.basic_auth_password):
+        # This process's own loopback signalling connections carry a per-run
+        # token instead of Basic Auth credentials (see WebRTCSignalling),
+        # since the real password may only be known in encrypted form.
+        is_internal = self.internal_token and request_headers.get("x-selkies-internal-token") == self.internal_token
+        # The password-only login page (see login.html) must itself be
+        # reachable without a challenge, so it can prompt for a password
+        # instead of the browser's native (username + password) Basic Auth
+        # dialog.
+        is_login_page = path.split("?")[0] in ("/login.html", "/login")
+        has_session = False
+        for cookie in request_headers.get("cookie", "").split(";"):
+            name, _, value = cookie.strip().partition("=")
+            if name == "selkies_session" and value in self._sessions:
+                has_session = True
+                break
+        if self.enable_basic_auth and not is_internal and not is_login_page and not has_session:
+            auth_header = request_headers.get("authorization", "")
+            if "basic" in auth_header.lower():
+                # Username is not checked, only the password.
+                _, passwd = basicauth.decode(auth_header)
+                if self.basic_auth_password_enc:
+                    ok = auth_secret.verify(passwd, self.basic_auth_password_enc)
+                else:
+                    ok = passwd == self.basic_auth_password
+                if not ok:
                     return http.HTTPStatus.UNAUTHORIZED, response_headers, b'Unauthorized'
+                # login.html checks the password via this same header/path
+                # combination; mint a session cookie so the follow-up
+                # navigation (a plain, credential-free request) is trusted
+                # without depending on the browser's own Basic Auth handling.
+                token = secrets.token_urlsafe(32)
+                self._sessions.add(token)
+                response_headers.append(('Set-Cookie', 'selkies_session={}; Path=/; HttpOnly; SameSite=Lax'.format(token)))
             else:
-                response_headers.append(('WWW-Authenticate', 'Basic realm="restricted, charset="UTF-8"'))
-                return http.HTTPStatus.UNAUTHORIZED, response_headers, b'Authorization required'
+                response_headers.append(('Location', '/login.html'))
+                return http.HTTPStatus.FOUND, response_headers, b''
 
         if path == "/ws/" or path == "/ws" or path.endswith("/signalling/") or path.endswith("/signalling"):
             return None
@@ -350,7 +386,9 @@ class WebRTCSimpleServer(object):
                     raise AssertionError('Unknown peer status {!r}'.format(peer_status))
             # Requested a session with a specific peer
             elif msg.startswith('SESSION'):
-                logger.info("{!r} command {!r}".format(uid, msg))
+                # debug level: this fires on every SESSION retry (~4x/sec while
+                # no browser peer is connected) and would otherwise spam the log.
+                logger.debug("{!r} command {!r}".format(uid, msg))
                 _, callee_id = msg.split(maxsplit=1)
                 if callee_id not in self.peers:
                     await ws.send('ERROR peer {!r} not found'.format(callee_id))
@@ -468,7 +506,7 @@ class WebRTCSimpleServer(object):
 
         # Setup logging
         logger.setLevel(logging.INFO)
-        web_logger.setLevel(logging.WARN)
+        web_logger.setLevel(logging.INFO)
 
         http_protocol = 'https:' if self.enable_https else 'http:'
         logger.info("Listening on {}//{}:{}".format(http_protocol, self.addr, self.port))

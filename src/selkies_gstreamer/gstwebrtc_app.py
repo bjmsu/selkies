@@ -21,12 +21,14 @@
 
 import asyncio
 import base64
+import functools
 import json
 import logging
 import os
 import re
 import sys
 import time
+import psutil
 
 logger = logging.getLogger("gstwebrtc_app")
 logger.setLevel(logging.INFO)
@@ -38,7 +40,8 @@ try:
     gi.require_version('GstRtp', "1.0")
     gi.require_version('GstSdp', "1.0")
     gi.require_version('GstWebRTC', "1.0")
-    from gi.repository import GLib, Gst, GstRtp, GstSdp, GstWebRTC
+    gi.require_version('Nice', "0.1")
+    from gi.repository import GLib, Gst, GstRtp, GstSdp, GstWebRTC, Nice
     fract = Gst.Fraction(60, 1)
     del fract
 except Exception as e:
@@ -64,6 +67,13 @@ logger.info("GStreamer-Python install looks OK")
 class GSTWebRTCAppError(Exception):
     pass
 
+@functools.lru_cache(maxsize=1)
+def _get_lo_52_address():
+    """Return the first 52.x.x.x address bound on lo, or None if not found."""
+    addrs = psutil.net_if_addrs().get("lo", [])
+    matches = [a.address for a in addrs if a.family.name == "AF_INET" and a.address.startswith("52.")]
+    return matches[0] if matches else None
+
 class GSTWebRTCApp:
     def __init__(self, stun_servers=None, turn_servers=None, audio_channels=2, framerate=30, encoder=None, gpu_id=0, video_bitrate=2000, audio_bitrate=96000, keyframe_distance=-1.0, congestion_control=False, video_packetloss_percent=0.0, audio_packetloss_percent=0.0):
         """Initialize GStreamer WebRTC app.
@@ -82,6 +92,8 @@ class GSTWebRTCApp:
         self.audio_channels = audio_channels
         self.pipeline = None
         self.webrtcbin = None
+        self.ice_agent = None
+        self.nice_agent = None
         self.data_channel = None
         self.rtpgccbwe = None
         self.congestion_control = congestion_control
@@ -156,6 +168,24 @@ class GSTWebRTCApp:
 
         # Create webrtcbin element named app
         self.webrtcbin = Gst.ElementFactory.make("webrtcbin", "app")
+
+        # Register a loopback-bound 52.x.x.x address (if present) as a real
+        # local ICE address so libnice gathers/binds a host candidate on it,
+        # and tighten STUN retransmission so unreachable candidate pairs fail
+        # fast instead of stalling ~17s before falling back.
+        lo_addr = _get_lo_52_address()
+        if lo_addr:
+            try:
+                self.ice_agent = self.webrtcbin.get_property("ice-agent")
+                self.nice_agent = self.ice_agent.get_property("agent")
+                self.nice_agent.set_property("stun-initial-timeout", 200)
+                self.nice_agent.set_property("stun-max-retransmissions", 2)
+                nice_address = Nice.Address()
+                nice_address.set_from_string(lo_addr)
+                self.nice_agent.add_local_address(nice_address)
+                logger.info("registered %s as a local ICE address", lo_addr)
+            except Exception:
+                logger.exception("failed to configure NiceAgent")
 
         # The bundle policy affects how the SDP is generated.
         # This will ultimately determine how many tracks the browser receives.

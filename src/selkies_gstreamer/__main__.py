@@ -25,6 +25,7 @@ import http.client
 import json
 import logging
 import os
+import secrets
 import signal
 import socket
 import sys
@@ -163,8 +164,6 @@ def make_turn_rtc_config_json_legacy(turn_host, turn_port, username, password, p
     stun_list = ["stun:{}:{}".format(turn_host, turn_port)]
     if stun_host is not None and stun_port is not None and (stun_host != turn_host or str(stun_port) != str(turn_port)):
         stun_list.insert(0, "stun:{}:{}".format(stun_host, stun_port))
-    if stun_host != "stun.l.google.com" or (str(stun_port) != "19302"):
-        stun_list.append("stun:stun.l.google.com:19302")
 
     rtc_config = {}
     rtc_config["lifetimeDuration"] = "86400s"
@@ -342,6 +341,11 @@ def main():
                         default=os.environ.get(
                             'SELKIES_BASIC_AUTH_PASSWORD', 'mypasswd'),
                         help='Password used when basic authentication is set')
+    parser.add_argument('--basic_auth_password_enc',
+                        default=os.environ.get(
+                            'SELKIES_BASIC_AUTH_PASSWORD_ENC', ''),
+                        help='Base64 AES-256-GCM encrypted secret produced by tools/gen_basic_auth_secret.py, checked by attempting to decrypt with the '
+                             'submitted password. When set, this takes priority over --basic_auth_password so the cleartext password is never stored.')
     parser.add_argument('--rtc_config_json',
                         default=os.environ.get(
                             'SELKIES_RTC_CONFIG_JSON', '/tmp/rtc.json'),
@@ -497,10 +501,11 @@ def main():
     logging.warn(args)
 
     # Set log level
+    _log_format = '%(asctime)s.%(msecs)03d %(levelname)s:%(name)s:%(message)s'
     if args.debug:
-        logging.basicConfig(level=logging.DEBUG)
+        logging.basicConfig(level=logging.DEBUG, format=_log_format, datefmt='%H:%M:%S', force=True)
     else:
-        logging.basicConfig(level=logging.INFO)
+        logging.basicConfig(level=logging.INFO, format=_log_format, datefmt='%H:%M:%S', force=True)
 
     # Wait for streaming app to initialize
     wait_for_app_ready(args.app_ready_file, args.app_wait_ready.lower() == "true")
@@ -520,32 +525,36 @@ def main():
     using_https = args.enable_https.lower() == 'true'
     using_basic_auth = args.enable_basic_auth.lower() == 'true'
     ws_protocol = 'wss:' if using_https else 'ws:'
+    # Random per-run secret so this process's own loopback signalling
+    # connections (below) can bypass Basic Auth instead of needing to know
+    # the real password, which may only exist encrypted (see
+    # --basic_auth_password_enc). Never written to disk or passed on the
+    # command line.
+    internal_token = secrets.token_urlsafe(32)
     signalling = WebRTCSignalling('%s//127.0.0.1:%s/ws' % (ws_protocol, args.port), my_id, peer_id,
         enable_https=using_https,
-        enable_basic_auth=using_basic_auth,
-        basic_auth_user=args.basic_auth_user,
-        basic_auth_password=args.basic_auth_password)
+        internal_token=internal_token)
 
     # Initialize signalling client for audio connection
     audio_signalling = WebRTCSignalling('%s//127.0.0.1:%s/ws' % (ws_protocol, args.port), my_audio_id, audio_peer_id,
         enable_https=using_https,
-        enable_basic_auth=using_basic_auth,
-        basic_auth_user=args.basic_auth_user,
-        basic_auth_password=args.basic_auth_password)
+        internal_token=internal_token)
 
     # Handle errors from the signalling server
     async def on_signalling_error(e):
        if isinstance(e, WebRTCSignallingErrorNoPeer):
-           # Waiting for peer to connect, retry in 2 seconds.
-           time.sleep(2)
+           # Waiting for peer to connect, retry quickly and without blocking
+           # the event loop (was a blocking time.sleep(2)).
+           await asyncio.sleep(0.25)
            await signalling.setup_call()
        else:
            logger.error("signalling error: %s", str(e))
            app.stop_pipeline()
     async def on_audio_signalling_error(e):
        if isinstance(e, WebRTCSignallingErrorNoPeer):
-           # Waiting for peer to connect, retry in 2 seconds.
-           time.sleep(2)
+           # Waiting for peer to connect, retry quickly and without blocking
+           # the event loop (was a blocking time.sleep(2)).
+           await asyncio.sleep(0.25)
            await audio_signalling.setup_call()
        else:
            logger.error("signalling error: %s", str(e))
@@ -814,6 +823,8 @@ def main():
     options.enable_basic_auth = using_basic_auth
     options.basic_auth_user = args.basic_auth_user
     options.basic_auth_password = args.basic_auth_password
+    options.basic_auth_password_enc = args.basic_auth_password_enc
+    options.internal_token = internal_token
     options.enable_https = using_https
     options.https_cert = args.https_cert
     options.https_key = args.https_key

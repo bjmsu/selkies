@@ -1,0 +1,117 @@
+<!-- This Source Code Form is subject to the terms of the Mozilla Public
+   - License, v. 2.0. If a copy of the MPL was not distributed with this
+   - file, You can obtain one at https://mozilla.org/MPL/2.0/. -->
+
+<!DOCTYPE html>
+<html>
+
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Selkies Login</title>
+  <style>
+    html, body {
+      height: 100%;
+      margin: 0;
+      background-color: #000000;
+      font-family: Roboto, Arial, sans-serif;
+    }
+    body {
+      display: flex;
+      align-items: center;
+      justify-content: center;
+    }
+    form {
+      display: flex;
+      flex-direction: column;
+      gap: 12px;
+      width: 260px;
+    }
+    input[type="password"] {
+      padding: 10px 12px;
+      font-size: 16px;
+      border: 1px solid #444;
+      border-radius: 4px;
+      background-color: #1e1e1e;
+      color: #eee;
+    }
+    button {
+      padding: 10px 12px;
+      font-size: 16px;
+      border: none;
+      border-radius: 4px;
+      background-color: #1976d2;
+      color: #fff;
+      cursor: pointer;
+    }
+    button:disabled {
+      opacity: 0.6;
+      cursor: default;
+    }
+    #error {
+      color: #ff5252;
+      font-size: 14px;
+      min-height: 1.2em;
+    }
+  </style>
+</head>
+
+<body>
+  <form id="login-form" autocomplete="off">
+    <input type="password" id="password" placeholder="Password" autofocus required>
+    <div id="error"></div>
+    <button type="submit" id="submit">Log in</button>
+  </form>
+
+  <script>
+    var form = document.getElementById('login-form');
+    var passwordInput = document.getElementById('password');
+    var errorEl = document.getElementById('error');
+    var submitBtn = document.getElementById('submit');
+
+    form.addEventListener('submit', function (e) {
+      e.preventDefault();
+      var password = passwordInput.value;
+      errorEl.textContent = '';
+      submitBtn.disabled = true;
+
+      function fail(err) {
+        errorEl.textContent = 'Login request failed: ' + (err && (err.message || err.name || err));
+        submitBtn.disabled = false;
+      }
+
+      try {
+        // Build a credential-free absolute URL explicitly: location.host
+        // never includes userinfo, but if this page itself was reached via a
+        // URL with embedded credentials (e.g. a leftover from testing), a
+        // plain relative fetch('/...') would resolve against that
+        // credentialed base and the Fetch spec refuses to construct the
+        // request at all.
+        var origin = window.location.protocol + '//' + window.location.host;
+
+        // Check the password via the existing Basic Auth header check (a
+        // random query string dodges any Service Worker / HTTP cache that
+        // might otherwise short-circuit this request before it reaches the
+        // server). On success the server also sets a session cookie in this
+        // same response, which the browser stores automatically - no need to
+        // smuggle the password into the follow-up navigation at all.
+        fetch(origin + '/?_login_check=' + Date.now(), {
+          headers: { 'Authorization': 'Basic ' + btoa(':' + password) },
+          cache: 'no-store',
+          credentials: 'same-origin',
+        }).then(function (resp) {
+          if (resp.ok) {
+            window.location.href = origin + '/';
+          } else {
+            errorEl.textContent = 'Incorrect password (HTTP ' + resp.status + ').';
+            submitBtn.disabled = false;
+          }
+        }).catch(fail);
+      } catch (err) {
+        fail(err);
+      }
+    });
+  </script>
+</body>
+
+</html>
