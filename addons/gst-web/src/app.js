@@ -126,6 +126,7 @@ var app = new Vue({
             status: 'connecting',
             loadingText: '',
             clipboardStatus: 'disabled',
+            clipboardServerText: '',
             windowResolution: "",
             encoderName: "",
             gamepad: {
@@ -239,6 +240,12 @@ var app = new Vue({
             this.showStart = false;
         },
         enableClipboard() {
+            if (!(navigator.clipboard && navigator.clipboard.readText)) {
+                // Insecure context (plain HTTP): the async Clipboard API does
+                // not exist; only the Shared clipboard textarea works.
+                webrtc._setStatus("Clipboard API unavailable without HTTPS; use the Shared clipboard box in this menu instead");
+                return;
+            }
             navigator.clipboard.readText()
                 .then(text => {
                     webrtc._setStatus("clipboard enabled");
@@ -247,6 +254,9 @@ var app = new Vue({
                 .catch(err => {
                     webrtc._setError('Failed to read clipboard contents: ' + err);
                 });
+        },
+        sendClipboardToServer() {
+            webrtc.sendDataChannelMessage("cw," + stringToBase64(this.clipboardServerText || ""));
         },
         publish() {
             var data = {
@@ -614,6 +624,9 @@ webrtc.ondatachannelopen = () => {
     // Bind input handlers.
     webrtc.input.attach();
 
+    // Seed the shared-clipboard textarea with the current server clipboard.
+    webrtc.sendDataChannelMessage("cr");
+
     // Send client-side metrics over data channel every 5 seconds
     setInterval(async () => {
         if (connectionStat.connectionFrameRate === parseInt(connectionStat.connectionFrameRate, 10)) webrtc.sendDataChannelMessage('_f,' + connectionStat.connectionFrameRate);
@@ -650,14 +663,17 @@ window.addEventListener('focus', () => {
     // reset keyboard to avoid stuck keys.
     webrtc.sendDataChannelMessage("kr");
 
-    // Send clipboard contents.
-    navigator.clipboard.readText()
-        .then(text => {
-            webrtc.sendDataChannelMessage("cw," + stringToBase64(text))
-        })
-        .catch(err => {
-            webrtc._setStatus('Failed to read clipboard contents: ' + err);
-        });
+    // Send clipboard contents. In insecure contexts (plain HTTP) readText
+    // does not exist; the Shared clipboard textarea is the channel instead.
+    if (navigator.clipboard && navigator.clipboard.readText) {
+        navigator.clipboard.readText()
+            .then(text => {
+                webrtc.sendDataChannelMessage("cw," + stringToBase64(text))
+            })
+            .catch(err => {
+                webrtc._setStatus('Failed to read clipboard contents: ' + err);
+            });
+    }
 });
 window.addEventListener('blur', () => {
     // reset keyboard to avoid stuck keys.
@@ -665,7 +681,11 @@ window.addEventListener('blur', () => {
 });
 
 webrtc.onclipboardcontent = (content) => {
-    if (app.clipboardStatus === 'enabled') {
+    // Always mirror the server clipboard into the sidebar textarea; in
+    // insecure contexts (plain HTTP) this is the only clipboard channel,
+    // since the async Clipboard API does not exist there.
+    app.clipboardServerText = content;
+    if (app.clipboardStatus === 'enabled' && navigator.clipboard && navigator.clipboard.writeText) {
         navigator.clipboard.writeText(content)
             .catch(err => {
                 webrtc._setStatus('Could not copy text to clipboard: ' + err);
@@ -794,7 +814,7 @@ webrtc.onsystemstats = async (stats) => {
 }
 
 // Safari without Permission API enabled fails
-if (navigator.permissions) {
+if (navigator.clipboard && navigator.permissions) {
     navigator.permissions.query({
         name: 'clipboard-read'
     }).then(permissionStatus => {
@@ -809,6 +829,8 @@ if (navigator.permissions) {
                 app.clipboardStatus = 'enabled';
             }
         };
+    }).catch(() => {
+        // Firefox does not implement the 'clipboard-read' permission name.
     });
 }
 

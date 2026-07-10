@@ -273,6 +273,12 @@
                 </v-toolbar>
               </p>
               <p>
+                <v-textarea label="Shared clipboard" rows="3" auto-grow v-model="clipboardServerText"
+                  v-on:change="sendClipboardToServer()"
+                  hint="Remote clipboard contents; edit here to push text to the remote clipboard"
+                  persistent-hint></v-textarea>
+              </p>
+              <p>
                 <v-select :items="videoBitRateOptions" label="Video bitrate" menu-props="left" v-model="videoBitRate"
                   hint="Dynamic bitrate selection for host video encoder" persistent-hint></v-select>
               </p>
