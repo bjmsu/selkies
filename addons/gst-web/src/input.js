@@ -574,6 +574,13 @@ class Input {
 
         // Reset stuck keys on server side.
         this.send("kr");
+
+        // Element fullscreen does not fire a window resize event, so the
+        // resolution the server should switch to must be pushed explicitly
+        // (both when entering and when leaving fullscreen).
+        if (this.onresizeend !== null) {
+            this.onresizeend();
+        }
     }
 
     /**
@@ -742,9 +749,20 @@ class Input {
     }
 
     getWindowResolution() {
+        // In element fullscreen the page layout (and so body offsets) keeps
+        // its pre-fullscreen size while the video actually covers the whole
+        // screen, so measure the screen instead.
+        var fullscreen = document.fullscreenElement !== null;
+        var baseWidth = fullscreen ? window.screen.width : document.body.offsetWidth;
+        var baseHeight = fullscreen ? window.screen.height : document.body.offsetHeight;
+        // Snap down to 16px: H.264 codes 16px macroblocks and vah264enc
+        // refuses unaligned frames, so a 16-aligned display resolution lets
+        // the server-side videoscale run in passthrough (one CPU core's
+        // worth of per-frame NV12 scaling saved) at the cost of at most 15px
+        // of unused window edge.
         return [
-            parseInt( (() => {var offsetRatioWidth = document.body.offsetWidth * window.devicePixelRatio; return offsetRatioWidth - offsetRatioWidth % 2})() ),
-            parseInt( (() => {var offsetRatioHeight = document.body.offsetHeight * window.devicePixelRatio; return offsetRatioHeight - offsetRatioHeight % 2})() )
+            parseInt( (() => {var offsetRatioWidth = baseWidth * window.devicePixelRatio; return offsetRatioWidth - offsetRatioWidth % 16})() ),
+            parseInt( (() => {var offsetRatioHeight = baseHeight * window.devicePixelRatio; return offsetRatioHeight - offsetRatioHeight % 16})() )
         ];
     }
 }

@@ -6,6 +6,7 @@
 <html>
 
 <head>
+  <meta charset="utf-8">
   <link href="css/vuetify.css" rel="stylesheet" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <link rel="manifest" href="manifest.json" crossorigin="use-credentials">
@@ -274,6 +275,11 @@
               <p>
                 <v-select :items="videoBitRateOptions" label="Video bitrate" menu-props="left" v-model="videoBitRate"
                   hint="Dynamic bitrate selection for host video encoder" persistent-hint></v-select>
+              </p>
+              <p>
+                <v-select :items="videoSaturationOptions" label="Video saturation" menu-props="left"
+                  v-model="videoSaturation" hint="Client-side saturation boost (CSS filter, no server cost)"
+                  persistent-hint></v-select>
               </p>
               <p>
                 <v-select :items="videoFramerateOptions" label="Video framerate" menu-props="left"

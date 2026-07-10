@@ -1,0 +1,12 @@
+prefix=/home/conda/feedstock_root/build_artifacts/xorg-libxinerama_1667399877116/_h_env_placehold_placehold_placehold_placehold_placehold_placehold_placehold_placehold_placehold_placehold_placehold_placehold_placehold_placehold_placehold_placehold_placehold_plac
+exec_prefix=${prefix}
+libdir=${exec_prefix}/lib
+includedir=${prefix}/include
+
+Name: Xinerama
+Description: The Xinerama Library
+Version: 1.1.5
+Requires: xineramaproto
+Requires.private: x11 xext
+Cflags: -I${includedir}
+Libs: -L${libdir} -lXinerama

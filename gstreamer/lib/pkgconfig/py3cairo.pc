@@ -1,0 +1,8 @@
+prefix=/home/conda/feedstock_root/build_artifacts/pycairo_1719237243681/_h_env_placehold_placehold_placehold_placehold_placehold_placehold_placehold_placehold_placehold_placehold_placehold_placehold_placehold_placehold_placehold_placehold_placehold_placehold_pla
+includedir=${prefix}/include
+
+Name: py3cairo
+Description: Python 3 bindings for cairo
+Version: 1.26.1
+Requires: cairo
+Cflags: -I${includedir}/pycairo

@@ -1,0 +1,9 @@
+prefix=/home/conda/feedstock_root/build_artifacts/libpciaccess_1707101229788/_h_env_placehold_placehold_placehold_placehold_placehold_placehold_placehold_placehold_placehold_placehold_placehold_placehold_placehold_placehold_placehold_placehold_placehold_placehol
+includedir=${prefix}/include
+libdir=${prefix}/lib
+
+Name: pciaccess
+Description: Library providing generic access to the PCI bus and devices
+Version: 0.18
+Libs: -L${libdir} -lpciaccess
+Cflags: -I${includedir}

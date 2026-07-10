@@ -1,0 +1,12 @@
+prefix=/home/conda/feedstock_root/build_artifacts/alsa-lib_1718118200823/_h_env_placehold_placehold_placehold_placehold_placehold_placehold_placehold_placehold_placehold_placehold_placehold_placehold_placehold_placehold_placehold_placehold_placehold_placehold_pl
+exec_prefix=/home/conda/feedstock_root/build_artifacts/alsa-lib_1718118200823/_h_env_placehold_placehold_placehold_placehold_placehold_placehold_placehold_placehold_placehold_placehold_placehold_placehold_placehold_placehold_placehold_placehold_placehold_placehold_pl
+libdir=${exec_prefix}/lib
+includedir=${prefix}/include
+
+Name: alsa
+Description: Advanced Linux Sound Architecture (ALSA) - Library
+Version: 1.2.12
+Requires: 
+Libs: -L${libdir} -lasound
+Libs.private: -lm -lpthread -lrt
+Cflags: -I${includedir}

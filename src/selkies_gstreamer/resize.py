@@ -35,7 +35,7 @@ def get_new_res(res):
 
     screen_pat = re.compile(r'(.*)? connected.*?')
     current_pat = re.compile(r'.*current (\d+ x \d+).*')
-    res_pat = re.compile(r'^(\d+x\d+)\s.*$')
+    res_pat = re.compile(r'^(s?\d+x\d+)\s.*$')
 
     found_screen = False
     curr_res = new_res = max_res = res
@@ -80,22 +80,35 @@ def resize_display(res):
         return False
 
     w, h = new_res.split("x")
-    res = mode = new_res
+    res = new_res
+    # xorgxrdp keeps an internal pool of standard modes whose plain "WxH"
+    # names collide with --newmode (BadName) while being invisible to
+    # --rmmode, so modes created here get an "s" prefix to stay clear of it.
+    smode = "s" + new_res
 
     logger.info("resizing display to %s" % res)
-    if res not in resolutions:
-        logger.info("adding mode %s to xrandr screen '%s'" % (res, screen_name))
+    if res in resolutions:
+        # A native mode with this geometry is already attached; use it.
+        mode = res
+    elif smode in resolutions:
+        # Our prefixed mode already exists from an earlier resize; use it.
+        mode = smode
+    else:
+        mode = smode
+        logger.info("adding mode %s to xrandr screen '%s'" % (mode, screen_name))
 
-        mode, modeline = generate_xrandr_gtf_modeline(res)
+        _, modeline = generate_xrandr_gtf_modeline(res)
 
         # Create new mode from modeline
         logger.info("creating new xrandr mode: %s %s" % (mode, modeline))
-        cmd = ['xrandr', '--newmode', mode, *re.split('\s+', modeline)]
+        cmd = ['xrandr', '--newmode', mode, *re.split(r'\s+', modeline)]
         p = subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
         stdout, stderr = p.communicate()
         if p.returncode != 0:
-            logger.error("failed to create new xrandr mode: '%s %s': %s%s" % (mode, modeline, str(stdout), str(stderr)))
-            return False
+            # The mode may already exist in the X server but be detached from
+            # the output (left over from an earlier session); --addmode below
+            # attaches it, so keep going.
+            logger.warning("xrandr --newmode '%s' failed (mode may already exist), trying --addmode anyway: %s%s" % (mode, str(stdout), str(stderr)))
 
         # Add the mode to the screen.
         logger.info("adding xrandr mode '%s' to screen '%s'" % (mode, screen_name))

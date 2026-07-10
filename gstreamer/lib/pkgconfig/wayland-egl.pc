@@ -1,0 +1,10 @@
+prefix=/home/conda/feedstock_root/build_artifacts/wayland_1717119247038/_h_env_placehold_placehold_placehold_placehold_placehold_placehold_placehold_placehold_placehold_placehold_placehold_placehold_placehold_placehold_placehold_placehold_placehold_placehold_pla
+includedir=${prefix}/include
+libdir=${prefix}/lib
+
+Name: wayland-egl
+Description: Frontend wayland-egl library
+Version: 18.1.0
+Requires: wayland-client
+Libs: -L${libdir} -lwayland-egl
+Cflags: -I${includedir}

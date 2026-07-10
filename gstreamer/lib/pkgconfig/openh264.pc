@@ -1,0 +1,10 @@
+prefix=/home/conda/feedstock_root/build_artifacts/openh264_1706873641041/_h_env_placehold_placehold_placehold_placehold_placehold_placehold_placehold_placehold_placehold_placehold_placehold_placehold_placehold_placehold_placehold_placehold_placehold_placehold_pl
+libdir=/home/conda/feedstock_root/build_artifacts/openh264_1706873641041/_h_env_placehold_placehold_placehold_placehold_placehold_placehold_placehold_placehold_placehold_placehold_placehold_placehold_placehold_placehold_placehold_placehold_placehold_placehold_pl/lib
+includedir=${prefix}/include
+
+Name: OpenH264
+Description: OpenH264 is a codec library which supports H.264 encoding and decoding. It is suitable for use in real time applications such as WebRTC.
+Version: 2.4.1
+Libs: -L${libdir} -lopenh264 
+Libs.private: -lstdc++ -lpthread -lm
+Cflags: -I${includedir}

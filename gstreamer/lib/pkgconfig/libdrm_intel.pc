@@ -1,0 +1,12 @@
+prefix=/home/conda/feedstock_root/build_artifacts/libdrm_1719531273141/_h_env_placehold_placehold_placehold_placehold_placehold_placehold_placehold_placehold_placehold_placehold_placehold_placehold_placehold_placehold_placehold_placehold_placehold_placehold_plac
+includedir=${prefix}/include
+libdir=${prefix}/lib
+
+Name: libdrm_intel
+Description: Userspace interface to intel kernel DRM services
+Version: 2.4.122
+Requires: libdrm
+Requires.private: pciaccess >=  0.10
+Libs: -L${libdir} -ldrm_intel
+Libs.private: -pthread
+Cflags: -I${includedir} -I${includedir}/libdrm

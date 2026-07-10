@@ -1,0 +1,13 @@
+prefix=/opt/conda/conda-bld/selkies-gstreamer_1723709211346/_h_env_placehold_placehold_placehold_placehold_placehold_placehold_placehold_placehold_placehold_placehold_placehold_placehold_placehold_placehold_placehold_placehold_placehold_placehold_placehold_place
+includedir=${prefix}/include
+libdir=${prefix}/lib
+
+toolsdir=${prefix}/bin
+orcc=${toolsdir}/orcc
+
+Name: orc-0.4
+Description: Library of Optimized Inner Loops Runtime Compiler
+Version: 0.4.38
+Libs: -L${libdir} -lorc-0.4
+Libs.private: -lm -pthread
+Cflags: -I${includedir}/orc-0.4

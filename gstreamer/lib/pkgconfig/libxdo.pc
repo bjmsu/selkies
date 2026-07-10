@@ -1,0 +1,9 @@
+libdir=/home/conda/feedstock_root/build_artifacts/xdotool_1717310016727/_h_env_placehold_placehold_placehold_placehold_placehold_placehold_placehold_placehold_placehold_placehold_placehold_placehold_placehold_placehold_placehold_placehold_placehold_placehold_pla/lib
+includedir=/home/conda/feedstock_root/build_artifacts/xdotool_1717310016727/_h_env_placehold_placehold_placehold_placehold_placehold_placehold_placehold_placehold_placehold_placehold_placehold_placehold_placehold_placehold_placehold_placehold_placehold_placehold_pla/include
+
+Name: libxdo
+Description: fake keyboard/mouse input, window management, and more
+Version: 3.20211022.1
+Requires: x11
+Libs: -L${libdir} -lxdo
+Cflags: -I${includedir}

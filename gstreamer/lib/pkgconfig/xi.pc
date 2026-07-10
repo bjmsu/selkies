@@ -1,0 +1,12 @@
+prefix=/home/conda/feedstock_root/build_artifacts/xorg-libxi_1722108041588/_h_env_placehold_placehold_placehold_placehold_placehold_placehold_placehold_placehold_placehold_placehold_placehold_placehold_placehold_placehold_placehold_placehold_placehold_placehold_
+exec_prefix=${prefix}
+libdir=${exec_prefix}/lib
+includedir=${prefix}/include
+
+Name: Xi
+Description: X Input Extension Library
+Version: 1.7.10
+Requires: inputproto
+Requires.private: x11 xext xfixes
+Cflags: -I${includedir}
+Libs: -L${libdir} -lXi

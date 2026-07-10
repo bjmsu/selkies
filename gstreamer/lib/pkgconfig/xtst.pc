@@ -1,0 +1,12 @@
+prefix=/home/conda/feedstock_root/build_artifacts/xorg-libxtst_1722575429131/_h_env_placehold_placehold_placehold_placehold_placehold_placehold_placehold_placehold_placehold_placehold_placehold_placehold_placehold_placehold_placehold_placehold_placehold_placehol
+exec_prefix=${prefix}
+libdir=${exec_prefix}/lib
+includedir=${prefix}/include
+
+Name: Xtst
+Description: The Xtst Library
+Version: 1.2.5
+Requires: recordproto
+Requires.private: x11 xext xextproto xi
+Cflags: -I${includedir}
+Libs: -L${libdir} -lXtst

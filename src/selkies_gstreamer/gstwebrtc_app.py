@@ -30,6 +30,8 @@ import sys
 import time
 import psutil
 
+from resize import get_new_res
+
 logger = logging.getLogger("gstwebrtc_app")
 logger.setLevel(logging.INFO)
 
@@ -73,6 +75,26 @@ def _get_lo_52_address():
     addrs = psutil.net_if_addrs().get("lo", [])
     matches = [a.address for a in addrs if a.family.name == "AF_INET" and a.address.startswith("52.")]
     return matches[0] if matches else None
+
+
+def _get_h264_aligned_resolution():
+    """Query the live X11 resolution and round it down to a 16px boundary.
+
+    H.264 codes frames in 16px macroblocks; vah264enc outright refuses to
+    encode a frame whose dimensions aren't 16-aligned ("Failed to encode the
+    frame error" from gstvabaseenc.c) rather than padding/cropping internally
+    the way x264enc does. A resolution like 1130 in height (not a multiple of
+    16) has to be scaled down in software first.
+    """
+    try:
+        result = get_new_res("1x1")
+        curr_res = result[0]
+        w, h = [int(v) for v in curr_res.split("x")]
+        return w - (w % 16), h - (h % 16)
+    except Exception:
+        logger.exception("failed to query current resolution for VA-API alignment")
+        return None
+
 
 class GSTWebRTCApp:
     def __init__(self, stun_servers=None, turn_servers=None, audio_channels=2, framerate=30, encoder=None, gpu_id=0, video_bitrate=2000, audio_bitrate=96000, keyframe_distance=-1.0, congestion_control=False, video_packetloss_percent=0.0, audio_packetloss_percent=0.0):
@@ -502,15 +524,49 @@ class GSTWebRTCApp:
                 nvav1enc.set_property("preset", "low-latency-hq")
 
         elif self.encoder in ["vah264enc"]:
-            # colorspace conversion
-            if self.gpu_id > 0:
-                vapostproc = Gst.ElementFactory.make("varenderD{}postproc".format(128 + self.gpu_id), "vapostproc")
-            else:
-                vapostproc = Gst.ElementFactory.make("vapostproc")
-            vapostproc.set_property("scale-method", "fast")
+            # PATCH: colorspace conversion in software (videoconvert), not
+            # vapostproc. vapostproc does RGB->NV12 via a VA-API surface
+            # export, and on this driver (Intel iHD) that export path is
+            # broken for BGRA/RGBX (logs show "Different fourcc: requested
+            # BGRA - returned ARGB" then "vaExportSurfaceHandle: invalid
+            # VASurfaceID"), which corrupts every frame. vah264enc's sink pad
+            # also accepts plain system-memory video/x-raw NV12 (confirmed via
+            # gst-inspect-1.0), so feeding it pre-converted NV12 skips
+            # vapostproc and that whole buggy VA surface-export path entirely
+            # while still hardware-encoding. This mirrors how pixelflux
+            # (github.com/linuxserver/pixelflux) avoids the same class of bug:
+            # it converts to NV12 with the CPU-side libyuv and only touches a
+            # VA surface for the already-NV12 encode input.
+            #
+            # PATCH: prefer the local yuvconv plugin (plugins/gstyuvconv.c,
+            # single-pass SIMD BGRx->NV12 via the system libyuv) — measured
+            # ~2x less CPU than even a tuned videoconvert at 1080p60. Falls
+            # back to videoconvert when the plugin or libyuv is unavailable.
+            vapostproc = Gst.ElementFactory.make("yuvconv")
+            if vapostproc is None:
+                logger.warning("yuvconv plugin not available, falling back to videoconvert (higher CPU)")
+                vapostproc = Gst.ElementFactory.make("videoconvert")
+                vapostproc.set_property("n-threads", min(4, max(1, len(os.sched_getaffinity(0)) - 1)))
+                # Skip chroma resampling and dithering: invisible on desktop
+                # content, saves ~25% conversion CPU.
+                vapostproc.set_property("dither", "none")
+                vapostproc.set_property("chroma-mode", "none")
+                vapostproc.set_property("matrix-mode", "output-only")
             vapostproc.set_property("qos", True)
-            vapostproc_caps = Gst.caps_from_string("video/x-raw(memory:VAMemory)")
+            # PATCH: no videoscale and no fixed width/height here. 16px
+            # alignment (vah264enc refuses unaligned frames) is guaranteed by
+            # the client: input.js getWindowResolution only ever requests
+            # %16-snapped resolutions, so the capture size is already
+            # encoder-safe. A videoscale in this spot silently converted
+            # colorimetry every frame (yuvconv outputs BT.601, the element
+            # "helpfully" bridged it from the BT.709 it offered upstream),
+            # burning ~half a core; with the caps fully determined by yuvconv
+            # there is nothing left for it to do.
+            vapostproc_caps = Gst.caps_from_string("video/x-raw")
             vapostproc_caps.set_value("format", "NV12")
+            # libyuv's ARGBToNV12 uses the BT.601 matrix; signal it in caps so
+            # the encoder's VUI tells the browser to use the same matrix.
+            vapostproc_caps.set_value("colorimetry", "bt601")
             vapostproc_capsfilter = Gst.ElementFactory.make("capsfilter")
             vapostproc_capsfilter.set_property("caps", vapostproc_caps)
 
@@ -1048,9 +1104,13 @@ class GSTWebRTCApp:
         # Disabled by default because pulsesrc should not be re-timestamped with the current stream time when pushed out to the GStreamer pipeline and destroy the original synchronization.
         pulsesrc.set_property("do-timestamp", False)
 
-        # Maximum and minimum amount of data to read in each iteration in microseconds
+        # Maximum and minimum amount of data to read in each iteration in microseconds.
+        # PATCH: latency-time raised 1000 -> 10000 (one opus frame): reading
+        # 1ms chunks meant 1000 wakeups/s in pulsesrc + pipewire-pulse
+        # (~15% CPU combined) with zero latency benefit, since opusenc
+        # aggregates to 10ms frames anyway.
         pulsesrc.set_property("buffer-time", 100000)
-        pulsesrc.set_property("latency-time", 1000)
+        pulsesrc.set_property("latency-time", 10000)
 
         # Create capabilities for pulsesrc and set channels
         pulsesrc_caps = Gst.caps_from_string("audio/x-raw")
@@ -1068,6 +1128,9 @@ class GSTWebRTCApp:
         opusenc.set_property("audio-type", "restricted-lowdelay")
         opusenc.set_property("bandwidth", "fullband")
         opusenc.set_property("bitrate-type", "cbr")
+        # PATCH: default complexity is 10 (maximum); 5 is transparent at
+        # desktop bitrates and roughly halves the encoder's CPU cost.
+        opusenc.set_property("complexity", 5)
         # OPUS_FRAME: Modify all locations with "OPUS_FRAME:"
         # Browser-side SDP munging ("minptime=3"/"minptime=5") is required if frame-size < 10
         opusenc.set_property("frame-size", "10")

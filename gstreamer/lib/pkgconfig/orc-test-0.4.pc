@@ -1,0 +1,10 @@
+prefix=/home/conda/feedstock_root/build_artifacts/gstreamer-orc_1721663175629/_h_env_placehold_placehold_placehold_placehold_placehold_placehold_placehold_placehold_placehold_placehold_placehold_placehold_placehold_placehold_placehold_placehold_placehold_placeho
+includedir=${prefix}/include
+libdir=${prefix}/lib
+
+Name: orc-test
+Description: Test Library of Optimized Inner Loops Runtime Compiler
+Version: 0.4.39
+Libs: -L${libdir} -lorc-test-0.4 -lm -lorc-0.4
+Libs.private: -pthread
+Cflags: -I${includedir}/orc-0.4

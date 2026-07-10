@@ -1,0 +1,9 @@
+prefix=/home/conda/feedstock_root/build_artifacts/libdrm_1719531273141/_h_env_placehold_placehold_placehold_placehold_placehold_placehold_placehold_placehold_placehold_placehold_placehold_placehold_placehold_placehold_placehold_placehold_placehold_placehold_plac
+includedir=${prefix}/include
+libdir=${prefix}/lib
+
+Name: libdrm
+Description: Userspace interface to kernel DRM services
+Version: 2.4.122
+Libs: -L${libdir} -ldrm
+Cflags: -I${includedir} -I${includedir}/libdrm

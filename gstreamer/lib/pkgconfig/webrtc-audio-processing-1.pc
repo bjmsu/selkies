@@ -1,0 +1,10 @@
+prefix=/opt/conda/conda-bld/selkies-gstreamer_1723709211346/_h_env_placehold_placehold_placehold_placehold_placehold_placehold_placehold_placehold_placehold_placehold_placehold_placehold_placehold_placehold_placehold_placehold_placehold_placehold_placehold_place
+includedir=${prefix}/include
+libdir=${prefix}/lib
+
+Name: webrtc-audio-processing-1
+Description: WebRTC Audio Processing library
+Version: 1.3
+Libs: -L${libdir} -lwebrtc-audio-processing-1
+Libs.private: -lrt -pthread
+Cflags: -I${includedir}/webrtc-audio-processing-1 -DWEBRTC_LIBRARY_IMPL -DWEBRTC_POSIX

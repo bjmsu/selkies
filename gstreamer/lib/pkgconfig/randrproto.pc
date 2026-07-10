@@ -1,0 +1,9 @@
+prefix=/home/conda/feedstock_root/build_artifacts/xorg-randrproto_1621339888734/_h_env_placehold_placehold_placehold_placehold_placehold_placehold_placehold_placehold_placehold_placehold_placehold_placehold_placehold_placehold_placehold_placehold_placehold_place
+exec_prefix=${prefix}
+libdir=${exec_prefix}/lib
+includedir=${prefix}/include
+ 
+Name: RandrProto
+Description: Randr extension headers
+Version: 1.5.0
+Cflags: -I${includedir}

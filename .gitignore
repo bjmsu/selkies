@@ -6,3 +6,8 @@ NOTES.md
 **/__pycache__/
 .venv
 gst-web-dist
+.xvfb.log
+.plasma.log
+.selkies.log
+gstreamer/.gst-registry.bin
+plugins/libgstyuvconv.so

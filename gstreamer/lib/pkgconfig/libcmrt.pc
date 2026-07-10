@@ -1,0 +1,10 @@
+prefix=/home/conda/feedstock_root/build_artifacts/cmrt_1600143999454/_h_env_placehold_placehold_placehold_placehold_placehold_placehold_placehold_placehold_placehold_placehold_placehold_placehold_placehold_placehold_placehold_placehold_placehold_placehold_placeh
+exec_prefix=${prefix}
+libdir=${exec_prefix}/lib
+includedir=${prefix}/include
+
+Name: libcmrt
+Description: Userspace C for Media runtime
+Version: 0.10.1
+Libs: -L${libdir} -lcmrt
+Cflags: -I${includedir}

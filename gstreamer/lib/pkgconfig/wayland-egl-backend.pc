@@ -1,0 +1,7 @@
+prefix=/home/conda/feedstock_root/build_artifacts/wayland_1717119247038/_h_env_placehold_placehold_placehold_placehold_placehold_placehold_placehold_placehold_placehold_placehold_placehold_placehold_placehold_placehold_placehold_placehold_placehold_placehold_pla
+includedir=${prefix}/include
+
+Name: wayland-egl-backend
+Description: Backend wayland-egl interface
+Version: 3
+Cflags: -I${includedir}

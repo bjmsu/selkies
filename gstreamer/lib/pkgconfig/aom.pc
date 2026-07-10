@@ -1,0 +1,14 @@
+# libaom pkg-config.
+prefix=/home/conda/feedstock_root/build_artifacts/aom_1718550795780/_h_env_placehold_placehold_placehold_placehold_placehold_placehold_placehold_placehold_placehold_placehold_placehold_placehold_placehold_placehold_placehold_placehold_placehold_placehold_placeho
+exec_prefix=${prefix}
+includedir=${prefix}/include
+libdir=${exec_prefix}//home/conda/feedstock_root/build_artifacts/aom_1718550795780/_h_env_placehold_placehold_placehold_placehold_placehold_placehold_placehold_placehold_placehold_placehold_placehold_placehold_placehold_placehold_placehold_placehold_placehold_placehold_placeho/lib
+
+Name: aom
+Description: Alliance for Open Media AV1 codec library v3.9.1.
+Version: 3.9.1
+Requires:
+Conflicts:
+Libs: -L${libdir} -laom
+Libs.private: -lm -lpthread
+Cflags: -I${includedir}

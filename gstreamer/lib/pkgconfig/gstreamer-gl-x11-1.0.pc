@@ -1,0 +1,8 @@
+prefix=/opt/conda/conda-bld/selkies-gstreamer_1723709211346/_h_env_placehold_placehold_placehold_placehold_placehold_placehold_placehold_placehold_placehold_placehold_placehold_placehold_placehold_placehold_placehold_placehold_placehold_placehold_placehold_place
+includedir=${prefix}/include
+
+Name: gstreamer-gl-x11-1.0
+Description: Streaming media framework, OpenGL plugins libraries (X11 specifics)
+Version: 1.24.6
+Requires: gstreamer-gl-1.0, x11-xcb
+Cflags: -I${includedir}/gstreamer-1.0

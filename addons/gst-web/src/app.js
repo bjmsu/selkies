@@ -52,6 +52,16 @@ var app = new Vue({
         return {
             appName: window.location.pathname.endsWith("/") && (window.location.pathname.split("/")[1]) || "webrtc",
             videoBitRate: 8000,
+            // Client-side CSS saturation boost (percent); GPU-composited by
+            // the browser, costs the server nothing.
+            videoSaturation: 100,
+            videoSaturationOptions: [
+                { text: '100% (original)', value: 100 },
+                { text: '110%', value: 110 },
+                { text: '120%', value: 120 },
+                { text: '130%', value: 130 },
+                { text: '150%', value: 150 },
+            ],
             videoBitRateOptions: [
                 { text: '250 kbps', value: 250 },
                 { text: '500 kbps', value: 500 },
@@ -274,6 +284,11 @@ var app = new Vue({
             webrtc.sendDataChannelMessage('vb,' + newValue);
             this.setIntParam("videoBitRate", newValue);
         },
+        videoSaturation(newValue) {
+            if (newValue === null) return;
+            webrtc.element.style.filter = (parseInt(newValue) === 100) ? '' : ('saturate(' + (newValue / 100) + ')');
+            this.setIntParam("videoSaturation", newValue);
+        },
         videoFramerate(newValue) {
             if (newValue === null) return;
             console.log("video framerate changed to " + newValue);
@@ -352,6 +367,7 @@ app.turnSwitch = app.getBoolParam("turnSwitch", false);
 
 // Fetch scale local settings
 app.scaleLocal = app.getBoolParam("scaleLocal", !app.resizeRemote);
+app.videoSaturation = app.getIntParam("videoSaturation", 100);
 
 var videoElement = document.getElementById("stream");
 if (videoElement === null) {
@@ -731,18 +747,14 @@ webrtc.onsystemaction = (action) => {
             }
         }
     } else if (action.startsWith("resolution")) {
-        // Sent when remote resizing is enabled.
-        // Match the CSS of the video element to the remote resolution.
+        // Sent when remote resizing is enabled and the display was just
+        // resized. The in-band H.264 resolution switch freezes the browser's
+        // decoder on the last pre-change frame, so re-establish the whole
+        // session at the new geometry instead of adjusting CSS (the login
+        // session cookie survives the reload).
         var remote_res = action.split(",")[1];
-        console.log("received remote resolution of: " + remote_res);
-        if (app.resizeRemote === true) {
-            var toks = remote_res.split("x");
-            webrtc.element.style.width = toks[0]/window.devicePixelRatio+'px';
-            webrtc.element.style.height = toks[1]/window.devicePixelRatio+'px';
-
-            // Update cursor scale factor
-            webrtc.input.getCursorScaleFactor({ remoteResolutionEnabled: true });
-        }
+        console.log("received remote resolution of: " + remote_res + ", reloading to renegotiate the stream");
+        setTimeout(() => document.location.reload(), 300);
     } else if (action.startsWith("local_scaling")) {
         // Local scaling default pushed from server
 

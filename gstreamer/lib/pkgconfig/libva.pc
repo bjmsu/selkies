@@ -1,0 +1,13 @@
+prefix=/home/conda/feedstock_root/build_artifacts/libva_1718886648560/_h_env_placehold_placehold_placehold_placehold_placehold_placehold_placehold_placehold_placehold_placehold_placehold_placehold_placehold_placehold_placehold_placehold_placehold_placehold_place
+includedir=${prefix}/include
+libdir=${prefix}/lib
+
+libva_version=2.22.0
+va_api_version=1.22.0
+driverdir=/home/conda/feedstock_root/build_artifacts/libva_1718886648560/_h_env_placehold_placehold_placehold_placehold_placehold_placehold_placehold_placehold_placehold_placehold_placehold_placehold_placehold_placehold_placehold_placehold_placehold_placehold_place/lib/dri
+
+Name: va
+Description: Userspace Video Acceleration (VA) core interface
+Version: 1.22.0
+Libs: -L${libdir} -lva
+Cflags: -I${includedir}

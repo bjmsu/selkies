@@ -1,0 +1,9 @@
+prefix=/opt/conda/conda-bld/selkies-gstreamer_1723709211346/_h_env_placehold_placehold_placehold_placehold_placehold_placehold_placehold_placehold_placehold_placehold_placehold_placehold_placehold_placehold_placehold_placehold_placehold_placehold_placehold_place
+includedir=${prefix}/include
+libdir=${prefix}/lib
+
+Name: libsrtp2
+Description: Library for SRTP (Secure Realtime Transport Protocol)
+Version: 2.5.0
+Libs: -L${libdir} -lsrtp2
+Cflags: -I${includedir}

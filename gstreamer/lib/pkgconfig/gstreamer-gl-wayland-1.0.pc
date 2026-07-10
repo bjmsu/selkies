@@ -1,0 +1,8 @@
+prefix=/opt/conda/conda-bld/selkies-gstreamer_1723709211346/_h_env_placehold_placehold_placehold_placehold_placehold_placehold_placehold_placehold_placehold_placehold_placehold_placehold_placehold_placehold_placehold_placehold_placehold_placehold_placehold_place
+includedir=${prefix}/include
+
+Name: gstreamer-gl-wayland-1.0
+Description: Streaming media framework, OpenGL plugins libraries (Wayland specifics)
+Version: 1.24.6
+Requires: gstreamer-gl-1.0, wayland-egl, wayland-client
+Cflags: -I${includedir}/gstreamer-1.0

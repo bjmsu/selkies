@@ -1,0 +1,11 @@
+prefix=/home/conda/feedstock_root/build_artifacts/libxkbcommon_1718819746648/_h_env_placehold_placehold_placehold_placehold_placehold_placehold_placehold_placehold_placehold_placehold_placehold_placehold_placehold_placehold_placehold_placehold_placehold_placehol
+includedir=${prefix}/include
+libdir=${prefix}/lib
+
+Name: xkbcommon-x11
+Description: XKB API common to servers and clients - X11 support
+Version: 1.7.0
+Requires: xkbcommon
+Requires.private: xcb >= 1.10, xcb-xkb >= 1.10
+Libs: -L${libdir} -lxkbcommon-x11
+Cflags: -I${includedir}

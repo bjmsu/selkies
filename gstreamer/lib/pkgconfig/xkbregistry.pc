@@ -1,0 +1,10 @@
+prefix=/home/conda/feedstock_root/build_artifacts/libxkbcommon_1718819746648/_h_env_placehold_placehold_placehold_placehold_placehold_placehold_placehold_placehold_placehold_placehold_placehold_placehold_placehold_placehold_placehold_placehold_placehold_placehol
+includedir=${prefix}/include
+libdir=${prefix}/lib
+
+Name: xkbregistry
+Description: XKB API to query available rules, models, layouts, variants and options
+Version: 1.7.0
+Requires.private: libxml-2.0
+Libs: -L${libdir} -lxkbregistry
+Cflags: -I${includedir}
