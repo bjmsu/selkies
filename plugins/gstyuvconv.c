@@ -1,10 +1,20 @@
-/* yuvconv: single-pass BGRx -> NV12 converter backed by libyuv.
+/* yuvconv: single-pass BGRx -> NV12 converter backed by libyuv, with
+ * duplicate-frame dropping.
  *
- * videoconvert does this conversion in multiple passes over the frame
+ * Conversion: videoconvert does BGRx->NV12 in multiple passes over the frame
  * (unpack -> matrix -> chroma subsample -> pack), which costs most of a CPU
  * core at 1080p60. libyuv's ARGBToNV12 (SIMD, one pass) does the same work
  * in a fraction of the time. libyuv names formats by little-endian word
  * order, so its "ARGB" is B,G,R,A in memory — exactly GStreamer's BGRx.
+ *
+ * Dedup: ximagesrc pushes at the configured framerate whether or not the
+ * screen changed (its use-damage mode is broken: it self-triggers ~30fps on
+ * an idle desktop). Comparing each incoming frame against the previous one
+ * and returning GST_BASE_TRANSFORM_FLOW_DROPPED for identical frames lets
+ * the encoder, payloader and network sleep while the desktop is static.
+ * memcmp exits on the first differing byte, so moving content pays almost
+ * nothing. A heartbeat frame is let through every few seconds so the WebRTC
+ * receiver never mistakes a static desktop for a dead stream.
  *
  * libyuv is loaded with dlopen so this plugin has no build-time dependency
  * on libyuv-dev; Ubuntu ships the runtime library (libyuv.so.0).
@@ -12,8 +22,10 @@
  * Build (uses the bundled GStreamer's headers):
  *   PKG_CONFIG_PATH=../gstreamer/lib/pkgconfig \
  *   gcc -O2 -shared -fPIC gstyuvconv.c -o libgstyuvconv.so \
- *       $(pkg-config --cflags --libs gstreamer-video-1.0) -ldl
+ *       $(pkg-config --define-prefix --cflags --libs gstreamer-video-1.0) -ldl
  */
+#include <string.h>
+
 #include <gst/gst.h>
 #include <gst/video/video.h>
 #include <gst/video/gstvideofilter.h>
@@ -27,6 +39,15 @@ static ArgbToNv12Fn argb_to_nv12;
 typedef struct
 {
   GstVideoFilter parent;
+
+  gboolean dedup;               /* property: drop identical frames */
+  guint heartbeat_ms;           /* property: max ms between emitted frames */
+
+  guint8 *prev;                 /* previous frame, compact width*4 rows */
+  gsize prev_rowbytes;
+  gint prev_height;
+  gboolean have_prev;
+  gint64 last_push_us;          /* monotonic time of last emitted frame */
 } GstYuvConv;
 
 typedef struct
@@ -37,6 +58,13 @@ typedef struct
 #define GST_TYPE_YUVCONV (gst_yuvconv_get_type())
 GType gst_yuvconv_get_type (void);
 G_DEFINE_TYPE (GstYuvConv, gst_yuvconv, GST_TYPE_VIDEO_FILTER);
+
+enum
+{
+  PROP_0,
+  PROP_DEDUP,
+  PROP_HEARTBEAT_MS,
+};
 
 static GstStaticPadTemplate sink_tmpl = GST_STATIC_PAD_TEMPLATE ("sink",
     GST_PAD_SINK, GST_PAD_ALWAYS,
@@ -75,40 +103,188 @@ gst_yuvconv_transform_caps (GstBaseTransform * trans, GstPadDirection dir,
   return ret;
 }
 
+static gboolean
+gst_yuvconv_set_info (GstVideoFilter * filter, GstCaps * incaps,
+    GstVideoInfo * in_info, GstCaps * outcaps, GstVideoInfo * out_info)
+{
+  GstYuvConv *self = (GstYuvConv *) filter;
+  gsize rowbytes = (gsize) GST_VIDEO_INFO_WIDTH (in_info) * 4;
+  gsize size = rowbytes * GST_VIDEO_INFO_HEIGHT (in_info);
+
+  g_free (self->prev);
+  self->prev = g_malloc (size);
+  self->prev_rowbytes = rowbytes;
+  self->prev_height = GST_VIDEO_INFO_HEIGHT (in_info);
+  self->have_prev = FALSE;
+  return TRUE;
+}
+
+/* Dedup happens here, BEFORE the base class allocates and maps the output
+ * buffer: the encoder proposes a VA-backed pool, and mapping those buffers
+ * costs real CPU/GPU-sync time that would be wasted on frames we are about
+ * to drop anyway. */
+static GstFlowReturn
+gst_yuvconv_prepare_output_buffer (GstBaseTransform * trans, GstBuffer * inbuf,
+    GstBuffer ** outbuf)
+{
+  GstYuvConv *self = (GstYuvConv *) trans;
+  GstVideoFilter *filter = GST_VIDEO_FILTER (trans);
+
+  if (self->dedup && self->prev && filter->negotiated) {
+    GstVideoFrame in;
+
+    if (gst_video_frame_map (&in, &filter->in_info, inbuf, GST_MAP_READ)) {
+      const guint8 *src = GST_VIDEO_FRAME_PLANE_DATA (&in, 0);
+      gint src_stride = GST_VIDEO_FRAME_PLANE_STRIDE (&in, 0);
+      gint height = GST_VIDEO_FRAME_HEIGHT (&in);
+      gsize rowbytes = (gsize) GST_VIDEO_FRAME_WIDTH (&in) * 4;
+
+      if (height == self->prev_height && rowbytes == self->prev_rowbytes) {
+        gint64 now = g_get_monotonic_time ();
+
+        if (self->have_prev &&
+            now - self->last_push_us < (gint64) self->heartbeat_ms * 1000) {
+          gboolean identical = TRUE;
+          gint y;
+
+          for (y = 0; y < height; y++) {
+            if (memcmp (src + (gsize) y * src_stride,
+                    self->prev + (gsize) y * rowbytes, rowbytes) != 0) {
+              identical = FALSE;
+              break;
+            }
+          }
+          if (identical) {
+            gst_video_frame_unmap (&in);
+            *outbuf = NULL;
+            return GST_BASE_TRANSFORM_FLOW_DROPPED;
+          }
+        }
+
+        /* frame changed (or heartbeat due): remember it for the next compare */
+        if (src_stride == (gint) rowbytes) {
+          memcpy (self->prev, src, rowbytes * height);
+        } else {
+          gint y;
+          for (y = 0; y < height; y++)
+            memcpy (self->prev + (gsize) y * rowbytes,
+                src + (gsize) y * src_stride, rowbytes);
+        }
+        self->have_prev = TRUE;
+        self->last_push_us = now;
+      }
+      gst_video_frame_unmap (&in);
+    }
+  }
+
+  return GST_BASE_TRANSFORM_CLASS (gst_yuvconv_parent_class)->
+      prepare_output_buffer (trans, inbuf, outbuf);
+}
+
 static GstFlowReturn
 gst_yuvconv_transform_frame (GstVideoFilter * filter, GstVideoFrame * in,
     GstVideoFrame * out)
 {
+  gint height = GST_VIDEO_FRAME_HEIGHT (in);
+
   if (argb_to_nv12 (GST_VIDEO_FRAME_PLANE_DATA (in, 0),
           GST_VIDEO_FRAME_PLANE_STRIDE (in, 0),
           GST_VIDEO_FRAME_PLANE_DATA (out, 0),
           GST_VIDEO_FRAME_PLANE_STRIDE (out, 0),
           GST_VIDEO_FRAME_PLANE_DATA (out, 1),
           GST_VIDEO_FRAME_PLANE_STRIDE (out, 1),
-          GST_VIDEO_FRAME_WIDTH (in), GST_VIDEO_FRAME_HEIGHT (in)) != 0)
+          GST_VIDEO_FRAME_WIDTH (in), height) != 0)
     return GST_FLOW_ERROR;
   return GST_FLOW_OK;
 }
 
 static void
+gst_yuvconv_set_property (GObject * object, guint prop_id,
+    const GValue * value, GParamSpec * pspec)
+{
+  GstYuvConv *self = (GstYuvConv *) object;
+
+  switch (prop_id) {
+    case PROP_DEDUP:
+      self->dedup = g_value_get_boolean (value);
+      break;
+    case PROP_HEARTBEAT_MS:
+      self->heartbeat_ms = g_value_get_uint (value);
+      break;
+    default:
+      G_OBJECT_WARN_INVALID_PROPERTY_ID (object, prop_id, pspec);
+      break;
+  }
+}
+
+static void
+gst_yuvconv_get_property (GObject * object, guint prop_id, GValue * value,
+    GParamSpec * pspec)
+{
+  GstYuvConv *self = (GstYuvConv *) object;
+
+  switch (prop_id) {
+    case PROP_DEDUP:
+      g_value_set_boolean (value, self->dedup);
+      break;
+    case PROP_HEARTBEAT_MS:
+      g_value_set_uint (value, self->heartbeat_ms);
+      break;
+    default:
+      G_OBJECT_WARN_INVALID_PROPERTY_ID (object, prop_id, pspec);
+      break;
+  }
+}
+
+static void
+gst_yuvconv_finalize (GObject * object)
+{
+  GstYuvConv *self = (GstYuvConv *) object;
+
+  g_free (self->prev);
+  self->prev = NULL;
+  G_OBJECT_CLASS (gst_yuvconv_parent_class)->finalize (object);
+}
+
+static void
 gst_yuvconv_init (GstYuvConv * self)
 {
+  self->dedup = TRUE;
+  self->heartbeat_ms = 3000;
 }
 
 static void
 gst_yuvconv_class_init (GstYuvConvClass * klass)
 {
+  GObjectClass *oc = G_OBJECT_CLASS (klass);
   GstElementClass *ec = GST_ELEMENT_CLASS (klass);
   GstBaseTransformClass *bc = GST_BASE_TRANSFORM_CLASS (klass);
   GstVideoFilterClass *vc = GST_VIDEO_FILTER_CLASS (klass);
 
+  oc->set_property = gst_yuvconv_set_property;
+  oc->get_property = gst_yuvconv_get_property;
+  oc->finalize = gst_yuvconv_finalize;
+
+  g_object_class_install_property (oc, PROP_DEDUP,
+      g_param_spec_boolean ("dedup", "Drop duplicate frames",
+          "Drop frames identical to the previous one so downstream sleeps "
+          "while the picture is static", TRUE,
+          G_PARAM_READWRITE | G_PARAM_STATIC_STRINGS));
+  g_object_class_install_property (oc, PROP_HEARTBEAT_MS,
+      g_param_spec_uint ("heartbeat-ms", "Heartbeat interval",
+          "Always emit a frame after this many milliseconds even if nothing "
+          "changed", 100, 60000, 3000,
+          G_PARAM_READWRITE | G_PARAM_STATIC_STRINGS));
+
   gst_element_class_set_static_metadata (ec,
       "libyuv BGRx to NV12 converter", "Filter/Converter/Video",
-      "Single-pass SIMD BGRx to NV12 conversion via libyuv",
-      "selkies-local");
+      "Single-pass SIMD BGRx to NV12 conversion via libyuv, "
+      "with duplicate-frame dropping", "selkies-local");
   gst_element_class_add_static_pad_template (ec, &sink_tmpl);
   gst_element_class_add_static_pad_template (ec, &src_tmpl);
   bc->transform_caps = gst_yuvconv_transform_caps;
+  bc->prepare_output_buffer = gst_yuvconv_prepare_output_buffer;
+  vc->set_info = gst_yuvconv_set_info;
   vc->transform_frame = gst_yuvconv_transform_frame;
 }
 
@@ -127,5 +303,5 @@ plugin_init (GstPlugin * plugin)
 
 #define PACKAGE "selkies-local"
 GST_PLUGIN_DEFINE (GST_VERSION_MAJOR, GST_VERSION_MINOR, yuvconv,
-    "libyuv colorspace converter", plugin_init, "1.0", "LGPL",
+    "libyuv colorspace converter", plugin_init, "1.1", "LGPL",
     "selkies-local", "https://github.com/selkies-project/selkies")
