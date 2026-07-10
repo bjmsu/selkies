@@ -1,0 +1,25 @@
+[Unit]
+Description=Selkies browser remote desktop (virtual Plasma desktop on :20)
+# user@1000: with lingering enabled this brings up /run/user/1000 and the
+# user's pipewire at boot, which selkies' audio capture needs.
+After=network-online.target user@1000.service
+Wants=network-online.target user@1000.service
+
+[Service]
+Type=simple
+User=kubuntu
+Group=kubuntu
+WorkingDirectory=/home/kubuntu/project/selkies
+Environment=PORT=80
+Environment=XDG_RUNTIME_DIR=/run/user/1000
+ExecStart=/home/kubuntu/project/selkies/run.sh
+Restart=on-failure
+RestartSec=3
+# Port 80 is privileged; grant just the bind capability instead of root.
+AmbientCapabilities=CAP_NET_BIND_SERVICE
+# run.sh detaches Xvfb + Plasma on purpose so the desktop survives selkies
+# restarts; only kill selkies itself on stop/restart.
+KillMode=process
+
+[Install]
+WantedBy=multi-user.target
