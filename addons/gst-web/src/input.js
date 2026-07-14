@@ -755,14 +755,14 @@ class Input {
         var fullscreen = document.fullscreenElement !== null;
         var baseWidth = fullscreen ? window.screen.width : document.body.offsetWidth;
         var baseHeight = fullscreen ? window.screen.height : document.body.offsetHeight;
-        // Snap down to 16px: H.264 codes 16px macroblocks and vah264enc
-        // refuses unaligned frames, so a 16-aligned display resolution lets
-        // the server-side videoscale run in passthrough (one CPU core's
-        // worth of per-frame NV12 scaling saved) at the cost of at most 15px
-        // of unused window edge.
+        // Snap down to 2px: NV12 chroma subsampling needs even dimensions.
+        // (Was 16px for vah264enc, but the current VA plugin/driver handles
+        // non-macroblock-aligned sizes itself via SPS cropping — verified by
+        // encoding 1920x1130/1417/1418 — so only evenness is required. This
+        // removes the up-to-15px unused black edge at the window border.)
         return [
-            parseInt( (() => {var offsetRatioWidth = baseWidth * window.devicePixelRatio; return offsetRatioWidth - offsetRatioWidth % 16})() ),
-            parseInt( (() => {var offsetRatioHeight = baseHeight * window.devicePixelRatio; return offsetRatioHeight - offsetRatioHeight % 16})() )
+            parseInt( (() => {var offsetRatioWidth = baseWidth * window.devicePixelRatio; return offsetRatioWidth - offsetRatioWidth % 2})() ),
+            parseInt( (() => {var offsetRatioHeight = baseHeight * window.devicePixelRatio; return offsetRatioHeight - offsetRatioHeight % 2})() )
         ];
     }
 }

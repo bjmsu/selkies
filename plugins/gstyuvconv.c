@@ -13,8 +13,10 @@
  * and returning GST_BASE_TRANSFORM_FLOW_DROPPED for identical frames lets
  * the encoder, payloader and network sleep while the desktop is static.
  * memcmp exits on the first differing byte, so moving content pays almost
- * nothing. A heartbeat frame is let through every few seconds so the WebRTC
- * receiver never mistakes a static desktop for a dead stream.
+ * nothing. A heartbeat frame is let through every 500ms so the WebRTC
+ * receiver never mistakes a static desktop for a dead stream, and so the
+ * CBR encoder keeps refining a just-changed picture to sharpness quickly
+ * (the refinement rate is one step per heartbeat while static).
  *
  * libyuv is loaded with dlopen so this plugin has no build-time dependency
  * on libyuv-dev; Ubuntu ships the runtime library (libyuv.so.0).
@@ -42,6 +44,13 @@ typedef struct
 
   gboolean dedup;               /* property: drop identical frames */
   guint heartbeat_ms;           /* property: max ms between emitted frames */
+  gint force_emit;              /* property (atomic): pass the next frame
+                                 * unconditionally, then self-clear. Set by
+                                 * the app when the browser PLIs for a
+                                 * keyframe, so the IDR is not delayed by up
+                                 * to a heartbeat interval (libwebrtc re-PLIs
+                                 * after ~200ms, which otherwise snowballs
+                                 * into a keyframe storm on a static desktop). */
 
   guint8 *prev;                 /* previous frame, compact width*4 rows */
   gsize prev_rowbytes;
@@ -64,6 +73,7 @@ enum
   PROP_0,
   PROP_DEDUP,
   PROP_HEARTBEAT_MS,
+  PROP_FORCE_EMIT,
 };
 
 static GstStaticPadTemplate sink_tmpl = GST_STATIC_PAD_TEMPLATE ("sink",
@@ -141,8 +151,10 @@ gst_yuvconv_prepare_output_buffer (GstBaseTransform * trans, GstBuffer * inbuf,
 
       if (height == self->prev_height && rowbytes == self->prev_rowbytes) {
         gint64 now = g_get_monotonic_time ();
+        gboolean forced = g_atomic_int_compare_and_exchange (&self->force_emit,
+            TRUE, FALSE);
 
-        if (self->have_prev &&
+        if (self->have_prev && !forced &&
             now - self->last_push_us < (gint64) self->heartbeat_ms * 1000) {
           gboolean identical = TRUE;
           gint y;
@@ -211,6 +223,9 @@ gst_yuvconv_set_property (GObject * object, guint prop_id,
     case PROP_HEARTBEAT_MS:
       self->heartbeat_ms = g_value_get_uint (value);
       break;
+    case PROP_FORCE_EMIT:
+      g_atomic_int_set (&self->force_emit, g_value_get_boolean (value));
+      break;
     default:
       G_OBJECT_WARN_INVALID_PROPERTY_ID (object, prop_id, pspec);
       break;
@@ -229,6 +244,9 @@ gst_yuvconv_get_property (GObject * object, guint prop_id, GValue * value,
       break;
     case PROP_HEARTBEAT_MS:
       g_value_set_uint (value, self->heartbeat_ms);
+      break;
+    case PROP_FORCE_EMIT:
+      g_value_set_boolean (value, g_atomic_int_get (&self->force_emit));
       break;
     default:
       G_OBJECT_WARN_INVALID_PROPERTY_ID (object, prop_id, pspec);
@@ -250,7 +268,11 @@ static void
 gst_yuvconv_init (GstYuvConv * self)
 {
   self->dedup = TRUE;
-  self->heartbeat_ms = 3000;
+  /* Below libwebrtc's 200ms keyframe-wait timeout: once the receiver is in
+   * keyframe-required state, any inter-frame gap over 200ms times out and
+   * re-triggers a PLI, which sustains a keyframe-request storm on a static
+   * desktop. Keeping frames flowing faster than that starves the loop. */
+  self->heartbeat_ms = 150;
 }
 
 static void
@@ -273,7 +295,12 @@ gst_yuvconv_class_init (GstYuvConvClass * klass)
   g_object_class_install_property (oc, PROP_HEARTBEAT_MS,
       g_param_spec_uint ("heartbeat-ms", "Heartbeat interval",
           "Always emit a frame after this many milliseconds even if nothing "
-          "changed", 100, 60000, 3000,
+          "changed", 100, 60000, 150,
+          G_PARAM_READWRITE | G_PARAM_STATIC_STRINGS));
+  g_object_class_install_property (oc, PROP_FORCE_EMIT,
+      g_param_spec_boolean ("force-emit", "Force emit one frame",
+          "Pass the next frame even if identical (self-clears); set this "
+          "when downstream needs a keyframe right now", FALSE,
           G_PARAM_READWRITE | G_PARAM_STATIC_STRINGS));
 
   gst_element_class_set_static_metadata (ec,

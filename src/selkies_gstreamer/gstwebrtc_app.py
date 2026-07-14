@@ -80,11 +80,10 @@ def _get_lo_52_address():
 def _get_h264_aligned_resolution():
     """Query the live X11 resolution and round it down to a 16px boundary.
 
-    H.264 codes frames in 16px macroblocks; vah264enc outright refuses to
-    encode a frame whose dimensions aren't 16-aligned ("Failed to encode the
-    frame error" from gstvabaseenc.c) rather than padding/cropping internally
-    the way x264enc does. A resolution like 1130 in height (not a multiple of
-    16) has to be scaled down in software first.
+    UNUSED (kept for reference). The 16px constraint no longer holds: the
+    current VA plugin/driver encodes non-macroblock-aligned sizes fine via
+    SPS cropping (verified with 1920x1130/1417/1418); only even dimensions
+    are required for NV12, which the client guarantees.
     """
     try:
         result = get_new_res("1x1")
@@ -133,7 +132,14 @@ class GSTWebRTCApp:
         self.keyframe_frame_distance = -1 if self.keyframe_distance == -1.0 else max(self.min_keyframe_frame_distance, int(self.framerate * self.keyframe_distance))
         # Set VBV/HRD buffer multiplier to frame time, set 1.5x when optimal (no keyframes/GOP) to prevent quality degradation in encoders, relax 2x when keyframe/GOP is periodic
         self.vbv_multiplier_nv = 1.5 if self.keyframe_distance == -1.0 else 3
-        self.vbv_multiplier_va = 1.5 if self.keyframe_distance == -1.0 else 3
+        # PATCH: 4.5x (was 1.5x) for VA. With yuvconv dedup the encoder gets
+        # sparse frames while the desktop is static, so an occasional big
+        # frame (PLI-forced IDR, full-screen change) can no longer be refined
+        # to sharpness within a fraction of a second by a 60fps stream. The
+        # larger CPB lets that one frame carry ~3x more bits (~75ms of extra
+        # burst at the configured bitrate) instead of starting out badly
+        # blurred.
+        self.vbv_multiplier_va = 4.5 if self.keyframe_distance == -1.0 else 3
         self.vbv_multiplier_vp = 1.5 if self.keyframe_distance == -1.0 else 3
         self.vbv_multiplier_sw = 1.5 if self.keyframe_distance == -1.0 else 3
         # Packet loss base percentage
@@ -553,11 +559,11 @@ class GSTWebRTCApp:
                 vapostproc.set_property("chroma-mode", "none")
                 vapostproc.set_property("matrix-mode", "output-only")
             vapostproc.set_property("qos", True)
-            # PATCH: no videoscale and no fixed width/height here. 16px
-            # alignment (vah264enc refuses unaligned frames) is guaranteed by
-            # the client: input.js getWindowResolution only ever requests
-            # %16-snapped resolutions, so the capture size is already
-            # encoder-safe. A videoscale in this spot silently converted
+            # PATCH: no videoscale and no fixed width/height here. The
+            # client (input.js getWindowResolution) only requests even
+            # dimensions (NV12 chroma needs that); the current VA plugin
+            # handles non-macroblock-aligned sizes itself via SPS cropping,
+            # so the capture size is already encoder-safe. A videoscale in this spot silently converted
             # colorimetry every frame (yuvconv outputs BT.601, the element
             # "helpfully" bridged it from the BT.709 it offered upstream),
             # burning ~half a core; with the caps fully determined by yuvconv
@@ -586,11 +592,36 @@ class GSTWebRTCApp:
             vah264enc.set_property("dct8x8", False)
             vah264enc.set_property("key-int-max", 1024 if self.keyframe_distance == -1.0 else self.keyframe_frame_distance)
             vah264enc.set_property("mbbrc", "disabled")
-            vah264enc.set_property("num-slices", 4)
+            # PATCH: single slice per frame (was 4, for encode parallelism).
+            # libwebrtc only clears its keyframe-required state when it can
+            # classify a received frame as a keyframe, and its H.264
+            # depacketizer is unreliable at that with multi-slice IDRs: the
+            # result was an endless PLI loop (~every 400ms, its throttled
+            # max) that forced every frame to be a fresh CPB-capped IDR, so
+            # a static desktop stayed permanently blurry.
+            vah264enc.set_property("num-slices", 1)
             vah264enc.set_property("ref-frames", 1)
             vah264enc.set_property("rate-control", "cbr")
             vah264enc.set_property("target-usage", 6)
             vah264enc.set_property("bitrate", self.fec_video_bitrate)
+
+            # PATCH: on a static desktop yuvconv holds frames back until the
+            # heartbeat, but when the browser sends a PLI the resulting IDR
+            # must go out within ~200ms or libwebrtc re-sends the PLI and a
+            # keyframe storm keeps the picture permanently blurry. The
+            # encoder consumes the force-key-unit event (never forwards it
+            # upstream), so peek at it on the encoder's src pad and tell
+            # yuvconv to pass the next captured frame immediately.
+            if vapostproc.find_property("force-emit") is not None:
+                def _on_vaenc_src_event(pad, info, conv=vapostproc):
+                    ev = info.get_event()
+                    if ev is not None and ev.type == Gst.EventType.CUSTOM_UPSTREAM:
+                        s = ev.get_structure()
+                        if s is not None and s.get_name() == "GstForceKeyUnit":
+                            conv.set_property("force-emit", True)
+                    return Gst.PadProbeReturn.OK
+                vah264enc.get_static_pad("src").add_probe(
+                    Gst.PadProbeType.EVENT_UPSTREAM, _on_vaenc_src_event)
 
         elif self.encoder in ["vah265enc"]:
             # colorspace conversion
@@ -1632,7 +1663,17 @@ class GSTWebRTCApp:
                 logger.warning("injecting modified level-asymmetry-allowed to SDP")
                 sdp_text = re.sub(r'level-asymmetry-allowed=\d+', r'level-asymmetry-allowed=1', sdp_text)
         # Enable sps-pps-idr-in-keyframe=1 in H.264 and H.265
-        if "h264" in self.encoder or "x264" in self.encoder or "h265" in self.encoder or "x265" in self.encoder:
+        # PATCH: disabled by default (opt back in with SELKIES_SPS_PPS_IDR_MUNGE=1).
+        # This fmtp makes libwebrtc classify a frame as a keyframe only when
+        # SPS+PPS+IDR are all found in it. A 1080p IDR always exceeds the
+        # 1200-byte MTU and is FU-A fragmented, with SPS/PPS in a separate
+        # packet, and the receiver then never recognizes our keyframes: its
+        # keyframe-required flag sticks and it PLIs forever (~400ms cadence,
+        # its throttled max), forcing every emitted frame to be a fresh
+        # CPB-capped IDR — a permanently blurry static desktop. rtph264pay
+        # config-interval=-1 already ships SPS/PPS with every IDR, so plain
+        # IDR-as-keyframe classification is safe, including across resizes.
+        if os.environ.get("SELKIES_SPS_PPS_IDR_MUNGE", "0") == "1" and ("h264" in self.encoder or "x264" in self.encoder or "h265" in self.encoder or "x265" in self.encoder):
             if 'sps-pps-idr-in-keyframe' not in sdp_text:
                 logger.warning("injecting sps-pps-idr-in-keyframe to SDP")
                 sdp_text = sdp_text.replace('packetization-mode=', 'sps-pps-idr-in-keyframe=1;packetization-mode=')

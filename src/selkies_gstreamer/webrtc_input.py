@@ -32,6 +32,7 @@ import os
 import subprocess
 import socket
 import struct
+import threading
 import time
 from PIL import Image
 from gamepad import SelkiesGamepad
@@ -85,6 +86,11 @@ class WebRTCInput:
         """Initializes WebRTC input instance
         """
         self.loop = None
+
+        # PATCH: set while a client's data channel is open. The clipboard and
+        # cursor monitor threads block on this event when no client is
+        # connected, so an idle server does no xsel forks or X polling.
+        self.client_active = threading.Event()
 
         self.clipboard_running = False
         self.uinput_mouse_socket_path = uinput_mouse_socket_path
@@ -422,6 +428,10 @@ class WebRTCInput:
             self.clipboard_running = True
             last_data = ""
             while self.clipboard_running:
+                # Sleep (zero CPU, no xsel forks) until a client connects;
+                # the timeout only bounds how long stop_clipboard() can take.
+                if not self.client_active.wait(timeout=2.0):
+                    continue
                 curr_data = self.read_clipboard()
                 if curr_data and curr_data != last_data:
                     logger.info(
@@ -468,6 +478,11 @@ class WebRTCInput:
             logger.warning("exception from fetching cursor image: %s" % e)
 
         while self.cursors_running:
+            # Sleep until a client connects; cursor events queue up in the X
+            # connection meanwhile and are drained (mostly from cache) on
+            # reconnect.
+            if not self.client_active.wait(timeout=2.0):
+                continue
             if self.xdisplay.pending_events() == 0:
                 time.sleep(0.1)
                 continue

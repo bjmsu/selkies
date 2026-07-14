@@ -696,7 +696,13 @@ def main():
         app.send_encoder(app.encoder)
         app.send_cursor_data(app.last_cursor_sent)
 
+        # Wake the clipboard and cursor monitor threads.
+        webrtc_input.client_active.set()
+
     app.on_data_open = lambda: data_channel_ready()
+    # Put the clipboard/cursor monitor threads back to sleep when the client
+    # goes away so an idle server polls nothing.
+    app.on_data_close = lambda: webrtc_input.client_active.clear()
 
     # Send incoming messages from data channel to input handler
     app.on_data_message = webrtc_input.on_message
@@ -916,6 +922,7 @@ def main():
 
             app.stop_pipeline()
             audio_app.stop_pipeline()
+            webrtc_input.client_active.clear()
             webrtc_input.stop_js_server()
     except Exception as e:
         logger.error("Caught exception: %s" % e)
